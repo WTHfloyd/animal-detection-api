@@ -1,0 +1,1 @@
+Animal Detection application based on the YOLO model
