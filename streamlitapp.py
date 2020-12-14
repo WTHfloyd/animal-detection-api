@@ -45,9 +45,12 @@ def drawboundingbox(img, boxes,pred_cls, rect_th=2, text_size=1, text_th=2):
         cv.putText(img,pred_cls[i], (int(boxes[i][0]), int(boxes[i][1])-5),  cv.FONT_HERSHEY_SIMPLEX, text_size, class_color_dict[pred_cls[i]],thickness=text_th)
     return img
 
-def inference_detector(session, img):
+def inference_detector(session, img, tresh=0.3):
+    pred_classes, pred_boxes, pred_confidence = [], [], []
+    h, w = img.shape[:2]
     # Image resize
-    img = cv.resize(img, (320,320))
+    img = cv.resize(img, (416,416))
+    img = cv.cvtColor(img, cv.COLOR_RGB2BGR)
     # Image normalization
     mean = np.float64(np.array([0,0,0]).reshape(1, -1))
     stdinv = 1 / np.float64(np.array([255.0,255.0,255.0]).reshape(1, -1))
@@ -57,21 +60,40 @@ def inference_detector(session, img):
     # Convert to [batch, c, h, w] shape
     img = img.transpose(2, 0, 1)
     img = np.expand_dims(img, 0)
+    # Run model
     outputs = session.run(None, {'input': img})
-    return outputs
+    # Prepare results
+    for box, cls in zip(outputs[0], outputs[1]):
+        if box[-1] > tresh:
+            pred_confidence.append(float(box[-1]))
+            pred_classes.append(str(CLASSES[cls]))
+            pred_boxes.append([int(box[0]*w/416), int(box[1]*h/416), int(box[2]*w/416), int(box[3]*h/416)])
+    return {'boxes': pred_boxes, 
+            'classes': pred_classes, 
+            'confidence': pred_confidence}
+
+@st.cache
+def get_session(model_path):
+    return rt.InferenceSession(model_path)
 
 CLASSES = ('Cat', 'Raccoon', 'Dog', 'Fox', 'Person', 'Mouse', 'Porcupine', 
                'Human_hand', 'Bird', 'Rabbit', 'Skunk', 'Squirrel', 'Deer', 'Snake')
-model_path = './yolov3.quant2.onnx'
-sess = rt.InferenceSession(model_path)
+model_path = './tiny_model.quant2.fix.onnx'
+sess = get_session(model_path)
 
-st.markdown("<h1>Our Object Detector App using FastAPI</h1><br>", unsafe_allow_html=True)
+st.markdown("<h1>Animal Detector App</h1><br>", unsafe_allow_html=True)
 
 bytesObj = st.file_uploader("Choose an image file")
 
 st.markdown("<center><h2>or</h2></center>", unsafe_allow_html=True)
 
 url = st.text_input('Enter URL')
+
+st.sidebar.title('Model parameters')
+thresh = st.sidebar.slider(
+    'Threshold:',
+    .0, 1., (.5)
+)
 
 if bytesObj or url:
     # In streamlit we will get a bytesIO object from the file_uploader
@@ -88,24 +110,15 @@ if bytesObj or url:
     img = np.asarray(img)
 
     # Model prediction
-    h, w = img.shape[:2]
-    result = inference_detector(sess, img.copy())
-    pred_classes, pred_boxes, pred_confidence = [], [], []
-    for box, cls in zip(result[0], result[1]):
-        if box[-1] > 0.3:
-            pred_confidence.append(float(box[-1]))
-            pred_classes.append(str(CLASSES[cls]))
-            pred_boxes.append([int(box[0]*w/320), int(box[1]*h/320), int(box[2]*w/320), int(box[3]*h/320)])
+    result = inference_detector(sess, img.copy(), tresh=thresh)
     
-
-
     st.markdown("<center><h1>App Result</h1></center>", unsafe_allow_html=True)
-    img = drawboundingbox(img, pred_boxes, pred_classes)
+    img = drawboundingbox(img, result['boxes'], result['classes'])
     # st.pyplot()
     fig, ax = plt.subplots()
     ax.imshow(img)
     ax.axis('off')
     st.pyplot(fig)
-    # st.markdown("<center><h1>FastAPI Response</h1></center><br>", unsafe_allow_html=True)
-    # st.write(data_dict)
+    st.markdown("<center><h1>FastAPI Response</h1></center><br>", unsafe_allow_html=True)
+    st.write(result)
 
